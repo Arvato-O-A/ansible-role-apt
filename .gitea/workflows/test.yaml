@@ -1,13 +1,14 @@
 ---
-name: Test & publish
-run-name: Checking role and publish on Ansible Galaxy
+name: Test
+run-name: Checking role
 on:  # yamllint disable-line rule:truthy
-  schedule:
-    - cron: '@weekly'
   push:
     branches:
-      - 'master'
-      - 'main'
+      - '*'         # matches every branch that doesn't contain a '/'
+      - '*/*'       # matches every branch containing a single '/'
+      - '**'        # matches every branch
+      - '!master'   # excludes master
+      - '!main'     # excludes main
 
 jobs:
   publish:
@@ -45,13 +46,6 @@ jobs:
               echo "Distro $i succes"
             done
           fi
-      - name: Publish to Galaxy
-        run: |
-          cd ${{ gitea.workspace }}
-          ansible-galaxy import --token $GALAXY_TOKEN Thulium-Drake ansible-role-${GITEA_REPO_NAME##*-} --role-name=${GITEA_REPO_NAME##*-}
-        env:
-          GALAXY_TOKEN: ${{ secrets.ANSIBLE_GALAXY_TOKEN }}
-          GITEA_REPO_NAME: ${{ gitea.repository }}
       - name: Clean up our mess
         if: always()
         run: |
