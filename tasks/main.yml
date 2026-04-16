@@ -1,35 +1,35 @@
 ---
-- name: 'Set up proxy server'
-  ansible.builtin.include_tasks: 'proxy_server.yml'
+- name: "Set up proxy server"
+  ansible.builtin.include_tasks: "proxy_server.yml"
   when: apt_is_proxy_server
 
-- name: 'Remove legacy apt.conf.d files left by pre-rename role versions'
+- name: "Remove legacy apt.conf.d files left by pre-rename role versions"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop:
-    - '/etc/apt/apt.conf.d/10periodic'
-    - '/etc/apt/apt.conf.d/50unattended-upgrades'
-    - '/etc/apt/apt.conf.d/01proxy'
+    - "/etc/apt/apt.conf.d/10periodic"
+    - "/etc/apt/apt.conf.d/50unattended-upgrades"
+    - "/etc/apt/apt.conf.d/01proxy"
 
-- name: 'Configure APT'
+- name: "Configure APT"
   ansible.builtin.template:
     src: "{{ file['src'] }}"
     dest: "{{ file['dest'] }}"
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
+    owner: "root"
+    group: "root"
+    mode: "0644"
   loop:
-    - src: 'apt-periodic.j2'
-      dest: '/etc/apt/apt.conf.d/11periodic'
-    - src: 'apt-unattended.j2'
-      dest: '/etc/apt/apt.conf.d/51unattended-upgrades'
-    - src: 'apt-proxy.j2'
-      dest: '/etc/apt/apt.conf.d/02proxy'
+    - src: "apt-periodic.j2"
+      dest: "/etc/apt/apt.conf.d/11periodic"
+    - src: "apt-unattended.j2"
+      dest: "/etc/apt/apt.conf.d/51unattended-upgrades"
+    - src: "apt-proxy.j2"
+      dest: "/etc/apt/apt.conf.d/02proxy"
   loop_control:
-    loop_var: 'file'
+    loop_var: "file"
 
-- name: 'Configure Debian main repos'
+- name: "Configure Debian main repos"
   # yamllint disable rule:line-length
   ansible.builtin.copy:
     content: |
@@ -44,16 +44,16 @@
       URIs: {{ debian_repo_mirror }}/debian-security
       Suites: {{ ansible_facts['distribution_release'] }}-security
       Components: {{ debian_repo_components }}
-    dest: '/etc/apt/sources.list.d/debian.sources'
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
-  notify: 'Update apt cache'
+    dest: "/etc/apt/sources.list.d/debian.sources"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  notify: "Update apt cache"
   when:
     - ansible_facts['distribution'] == "Debian"
     - not is_raspbian
 
-- name: 'Configure Raspbian main repos'
+- name: "Configure Raspbian main repos"
   ansible.builtin.copy:
     content: |
       # This file is managed by Ansible.
@@ -62,18 +62,74 @@
       URIs: {{ raspbian_repo_mirror }}/raspbian
       Suites: {{ ansible_facts['distribution_release'] }}
       Components: {{ raspbian_repo_components }}
-    dest: '/etc/apt/sources.list.d/raspbian.sources'
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
-  notify: 'Update apt cache'
+    dest: "/etc/apt/sources.list.d/raspbian.sources"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  notify: "Update apt cache"
   when:
     - ansible_facts['distribution'] == "Debian"
     - is_raspbian
 
-- name: 'Configure Ubuntu main repos'
+- name: "Select fastest Ubuntu apt mirror by bandwidth probe"
+  when:
+    - apt_autoselect_ubuntu_mirror | bool
+    - ansible_facts['distribution'] == "Ubuntu"
+  block:
+
+    - name: "Probe Launchpad mirror list and select fastest mirror"
+      ansible.builtin.shell: |
+        set -o pipefail
+        mirror_list=$(curl -fsSL --max-time 10 'https://launchpad.net/ubuntu/+archivemirrors' |
+          grep -B1 'statusUP' |
+          grep -oP 'href="\K(https?://[^"]+)(?=")' |
+          grep -v 'launchpad.net' |
+          shuf -n 20)
+        if [ -z "$mirror_list" ]; then
+          exit 1
+        fi
+        fastest_url=""
+        fastest_speed=0
+        while IFS= read -r url; do
+          speed=$(curl --max-time 2 -r 0-102400 -s \
+            -w "%{speed_download}" -o /dev/null \
+            "${url%/}/ubuntu/ls-lR.gz" 2>/dev/null || echo 0)
+          speed=${speed%.*}
+          if [ "${speed:-0}" -gt "$fastest_speed" ] 2>/dev/null; then
+            fastest_speed=$speed
+            fastest_url=$url
+          fi
+        done <<< "$mirror_list"
+        if [ -z "$fastest_url" ]; then
+          exit 1
+        fi
+        echo -n "${fastest_url%/}"
+      args:
+        executable: /bin/bash
+      register: ubuntu_mirror_result
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Apply fastest mirror selection"
+      ansible.builtin.set_fact:
+        ubuntu_repo_mirror: "{{ ubuntu_mirror_result.stdout | trim }}"
+      when:
+        - ubuntu_mirror_result is succeeded
+        - ubuntu_mirror_result.stdout | trim | length > 0
+
+    - name: "Warn: mirror probe failed, using fallback"
+      ansible.builtin.debug:
+        msg: >-
+          apt-fastest-mirror: mirror probe failed or returned no candidates.
+          Falling back to ubuntu_repo_mirror='{{ ubuntu_repo_mirror }}'.
+          Set apt_autoselect_ubuntu_mirror: false to suppress this probe.
+      when: >-
+        ubuntu_mirror_result is failed or
+        ubuntu_mirror_result.stdout | trim | length == 0
+
+- name: "Configure Ubuntu main repos"
   ansible.builtin.copy:
-  # yamllint disable rule:line-length
+    # yamllint disable rule:line-length
     content: |
       # This file is managed by Ansible.
       # YOUR CHANGES WILL BE LOST!
@@ -81,25 +137,25 @@
       URIs: {{ ubuntu_repo_mirror }}/ubuntu
       Suites: {{ ansible_facts['distribution_release'] }} {{ ansible_facts['distribution_release'] }}-updates {{ ansible_facts['distribution_release'] }}-security
       Components: {{ ubuntu_repo_components }}
-    dest: '/etc/apt/sources.list.d/ubuntu.sources'
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
-  notify: 'Update apt cache'
+    dest: "/etc/apt/sources.list.d/ubuntu.sources"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  notify: "Update apt cache"
   when: ansible_facts['distribution'] == "Ubuntu"
 
-- name: 'Update sources if required'
-  ansible.builtin.meta: 'flush_handlers'
+- name: "Update sources if required"
+  ansible.builtin.meta: "flush_handlers"
 
-- name: 'Install supporting packages'
+- name: "Install supporting packages"
   ansible.builtin.apt:
     name:
-      - 'dirmngr'
-      - 'unattended-upgrades'
-      - 'curl'
-    state: 'present'
+      - "dirmngr"
+      - "unattended-upgrades"
+      - "curl"
+    state: "present"
 
-- name: 'Configure repo keys from keyserver'
+- name: "Configure repo keys from keyserver"
   ansible.builtin.uri:
     url: "http://{{ repository_keyserver }}/pks/lookup?op=get&search=0x{{ repo_key['keyserver_id'] }}"
     dest: "/etc/apt/keyrings/{{ repo_key['name'] }}.asc"
@@ -111,10 +167,10 @@
     https_proxy: "{{ apt_proxy_url | default(omit) }}"
   loop: "{{ apt_other_repos | default([]) }}"
   loop_control:
-    loop_var: 'repo_key'
+    loop_var: "repo_key"
   when: repo_key['keyserver_id'] is defined
 
-- name: 'Configure repo keys from URLs'
+- name: "Configure repo keys from URLs"
   ansible.builtin.uri:
     url: "{{ repo_key['key_url'] }}"
     dest: "/etc/apt/keyrings/{{ repo_key['name'] }}.{{ (repo_key['key_armored'] | default(true)) | ternary('asc', 'gpg') }}"
@@ -126,10 +182,10 @@
     https_proxy: "{{ apt_proxy_url | default(omit) }}"
   loop: "{{ apt_other_repos | default([]) }}"
   loop_control:
-    loop_var: 'repo_key'
+    loop_var: "repo_key"
   when: repo_key['key_url'] is defined
 
-- name: 'Configure other repos'
+- name: "Configure other repos"
   ansible.builtin.copy:
     content: |
       # This file is managed by Ansible.
@@ -141,50 +197,50 @@
       Signed-By: /etc/apt/keyrings/{{ repo['name'] }}.{{ (repo['key_armored'] | default(true)) | ternary('asc', 'gpg') }}
       {{ (repo['arch'] | default('') | length > 0) | ternary('Architectures:' + repo['arch'] | default(''), '') }}
     dest: "/etc/apt/sources.list.d/{{ repo['name'] }}.sources"
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
-  notify: 'Update apt cache'
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  notify: "Update apt cache"
   loop: "{{ apt_other_repos | default([]) }}"
   loop_control:
-    loop_var: 'repo'
+    loop_var: "repo"
   when: apt_other_repos | length > 0
 
-- name: 'Purge legacy *.list files'
+- name: "Purge legacy *.list files"
   when: apt_purge_legacy_repos
   block:
-    - name: 'List repo files'
+    - name: "List repo files"
       ansible.builtin.find:
-        path: '/etc/apt/sources.list.d'
-        pattern: '*.list'
+        path: "/etc/apt/sources.list.d"
+        pattern: "*.list"
         get_checksum: false
-      register: 'repo_files'
+      register: "repo_files"
 
-    - name: 'Purge repo files'
+    - name: "Purge repo files"
       ansible.builtin.file:
         path: "{{ repo_file['path'] }}"
-        state: 'absent'
+        state: "absent"
       loop: "{{ repo_files['files'] }}"
       loop_control:
-        loop_var: 'repo_file'
+        loop_var: "repo_file"
 
-- name: 'Clean up default sources'
+- name: "Clean up default sources"
   ansible.builtin.template:
-    src: 'sources.list.j2'
-    dest: '/etc/apt/sources.list'
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
+    src: "sources.list.j2"
+    dest: "/etc/apt/sources.list"
+    owner: "root"
+    group: "root"
+    mode: "0644"
 
-- name: 'Disable apt-listchanges'
+- name: "Disable apt-listchanges"
   ansible.builtin.apt:
-    name: 'apt-listchanges'
-    state: 'absent'
+    name: "apt-listchanges"
+    state: "absent"
     purge: true
   when: not apt_listchanges_installed
 
-- name: 'Enable apt-listchanges'
+- name: "Enable apt-listchanges"
   ansible.builtin.apt:
-    name: 'apt-listchanges'
-    state: 'present'
+    name: "apt-listchanges"
+    state: "present"
   when: apt_listchanges_installed

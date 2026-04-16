@@ -36,6 +36,9 @@ debian_repo_components: 'main contrib non-free non-free-firmware'
 ubuntu_repo_mirror: 'http://archive.ubuntu.com'
 ubuntu_repo_components: 'main restricted universe multiverse'
 
+# Automatically select the fastest Ubuntu mirror by curl bandwidth probe
+apt_autoselect_ubuntu_mirror: true
+
 # Change logic of the role to suit Raspbian
 is_raspbian: false
 raspbian_repo_mirror: 'http://raspbian.raspberrypi.org'
