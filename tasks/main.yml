@@ -88,22 +88,25 @@
         if [ -z "$mirror_list" ]; then
           exit 1
         fi
-        fastest_url=""
-        fastest_speed=0
+        tmpdir=$(mktemp -d)
+        # Fire all probes in parallel
         while IFS= read -r url; do
-          speed=$(curl --max-time 2 -r 0-102400 -s \
-            -w "%{speed_download}" -o /dev/null \
-            "${url%/}/ubuntu/ls-lR.gz" 2>/dev/null || echo 0)
-          speed=${speed%.*}
-          if [ "${speed:-0}" -gt "$fastest_speed" ] 2>/dev/null; then
-            fastest_speed=$speed
-            fastest_url=$url
-          fi
+          (
+            speed=$(curl --max-time 2 -r 0-102400 -s \
+              -w "%{speed_download}" -o /dev/null \
+              "${url%/}/ubuntu/ls-lR.gz" 2>/dev/null || echo 0)
+            speed=${speed%.*}
+            printf '%s %s\n' "${speed:-0}" "${url%/}" \
+              > "$tmpdir/$(printf '%s' "$url" | cksum | cut -d' ' -f1)"
+          ) &
         done <<< "$mirror_list"
+        wait
+        fastest_url=$(sort -rn "$tmpdir"/* 2>/dev/null | head -1 | awk '{print $2}')
+        rm -rf "$tmpdir"
         if [ -z "$fastest_url" ]; then
           exit 1
         fi
-        echo -n "${fastest_url%/}"
+        echo -n "$fastest_url"
       args:
         executable: /bin/bash
       register: ubuntu_mirror_result
