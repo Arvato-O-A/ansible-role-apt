@@ -3,6 +3,15 @@
   ansible.builtin.include_tasks: 'proxy_server.yml'
   when: apt_is_proxy_server
 
+- name: 'Remove legacy apt.conf.d files left by pre-rename role versions'
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - '/etc/apt/apt.conf.d/10periodic'
+    - '/etc/apt/apt.conf.d/50unattended-upgrades'
+    - '/etc/apt/apt.conf.d/01proxy'
+
 - name: 'Configure APT'
   ansible.builtin.template:
     src: "{{ file['src'] }}"
