@@ -83,8 +83,7 @@
         mirror_list=$(curl -fsSL --max-time 10 'https://launchpad.net/ubuntu/+archivemirrors' |
           grep -B1 'statusUP' |
           grep -oP 'href="\K(https?://[^"]+)(?=")' |
-          grep -v 'launchpad.net' |
-          shuf -n 20)
+          grep -v 'launchpad.net')
         if [ -z "$mirror_list" ]; then
           exit 1
         fi
