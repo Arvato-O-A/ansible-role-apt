@@ -2,7 +2,7 @@
 - name: 'Verify'
   hosts: 'all'
   check_mode: true
-  gather_facts: false
+  gather_facts: true
   tasks:
     - name: 'Ensure test package installed'
       ansible.builtin.apt:
@@ -10,3 +10,29 @@
         state: 'present'
       register: result
       failed_when: result.changed
+
+    - name: 'Verify Ubuntu unattended-upgrades Origins-Pattern uses archive= key'
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      block:
+        - name: 'Read 51unattended-upgrades'
+          ansible.builtin.slurp:
+            src: '/etc/apt/apt.conf.d/51unattended-upgrades'
+          register: unattended_cfg
+
+        - name: 'Assert archive= key present for security suite'
+          ansible.builtin.assert:
+            that:
+              - >-
+                unattended_cfg['content'] | b64decode
+                | regex_findall('codename=[^;)]+')
+                | select('match', '.*-security.*')
+                | list | length == 0
+              - >-
+                unattended_cfg['content'] | b64decode
+                | regex_findall('codename=[^;)]+')
+                | select('match', '.*-updates.*')
+                | list | length == 0
+              - "'archive=' in (unattended_cfg['content'] | b64decode)"
+            fail_msg: >-
+              Origins-Pattern for Ubuntu must use 'archive=' not 'codename=' for
+              suite names ending in '-security'/'-updates'.
